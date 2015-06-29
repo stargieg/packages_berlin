@@ -50,7 +50,7 @@ set 6relayd.default.compat_ula=1
 set 6relayd.default.always_assume_default=1
 commit 6relayd
 EOF
-elif [ -x /sbin/odhcpd ] ; then
+elif [ -x /usr/sbin/odhcpd ] ; then
 uci -q batch <<-EOF >/dev/null
 delete dhcp.odhcpd
 set dhcp.odhcpd=odhcpd
@@ -75,7 +75,7 @@ if [ -f /etc/config/6relayd ] ; then
 		uci add_list 6relayd.default.network="$i"
 	done
 	uci commit 6relayd
-elif [ -x /sbin/odhcpd ] ; then
+elif [ -x /usr/sbin/odhcpd ] ; then
 	for i in $(echo $interfaces) ; do
 		uci set dhcp.$i.dhcpv6="server"
 		uci set dhcp.$i.ra="server"
@@ -90,4 +90,3 @@ sleep 20
 chmod 0644 /etc/config/*
 chmod 777 /var/run/ubus.sock
 ) >/dev/null 2>&1 &
-

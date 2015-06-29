@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 
 local sys = require "luci.sys"
-local fs = require "luci.fs"
+local fs = require "nixio.fs"
 local utl = require "luci.util"
 local uci = require "luci.model.uci".cursor()
 local ip = require "luci.ip"
@@ -45,7 +45,7 @@ function get_profiles()
 	local list = fs.glob(profiles .. "*") or {}
 	local pft = {}
 
-	for k,v in ipairs(list) do
+	for v in list do
 		pft[#pft+1] = {}
 		local n = string.gsub(v, profiles, "")
 		pft[#pft].uciname = n
@@ -108,18 +108,23 @@ function get_wconf(iw,tbl,pft)
 	wconf.profile = "berlin"
 	wconf.mode = "adhoc"
 	local ssid = "ch13.freifunk.net"
-	local channel = 13
 	local bssid = "D2:CA:FF:EE:BA:BE"
-	if not valid_channel(iw,channel) then
-		if valid_channel(iw,36) then
-			channel = 36
-			bssid = "02:36:CA:FF:EE:EE"
-			ssid = "ch36.freifunk.net"
-		elseif valid_channel(iw,100) then
-			channel = 100
-			bssid = "12:00:CA:FF:EE:EE"
-			ssid = "ch100.freifunk.net"
-		end
+	local channel = 13
+	if valid_channel(iw,channel) then
+		ssid = "ch13.freifunk.net"
+		bssid = "D2:CA:FF:EE:BA:BE"
+	elseif valid_channel(iw,10) then
+		channel = 10
+		ssid = "ch10.freifunk.net"
+		bssid = "02:CA:FF:EE:BA:BE"
+	elseif valid_channel(iw,36) then
+		channel = 36
+		bssid = "02:36:CA:FF:EE:EE"
+		ssid = "ch36.freifunk.net"
+	elseif valid_channel(iw,100) then
+		channel = 100
+		bssid = "12:00:CA:FF:EE:EE"
+		ssid = "ch100.freifunk.net"
 	end
 	wconf.ssid = ssid
 	wconf.bssid = bssid
@@ -150,14 +155,23 @@ table.insert(rifn,"lan")
 uci:delete_all("olsrd6", "Interface")
 uci:save("olsrd6")
 
+local wifi_restart = true
 for i,dev in ipairs(devices) do
-	seq = i - 1
-	print(dev:get("disabled"))
 	if dev:get("disabled") == "1" then
 		dev:set("disabled", "0")
-		dev:set("country", "DE")
+		dev:set("country", "00")
 		ntm:save("wireless")
-		sys.exec("/sbin/wifi reload_legacy")
+	else
+		wifi_restart = false
+	end
+end
+
+if wifi_restart then
+	sys.exec("/sbin/wifi restart")
+	sys.exec("/bin/sleep 20")
+	local seq
+	for i,dev in ipairs(devices) do
+		seq = i - 1
 		for _, net in ipairs(dev:get_wifinets()) do
 			local ifc = net:get_interface()
 			local iw, scan = iwscanlist(ifc.ifname,3)
@@ -173,40 +187,7 @@ for i,dev in ipairs(devices) do
 			local channel = wificonfig.channel
 			external = "profile_"..profile_name
 			dev:set("channel", channel)
-			dev:set("noscan",true)
 			dev:set("distance",1000)
-			local hwmode = dev:get("hwmode")
-			if string.find(hwmode, "n") then
-				has_n = "n"
-			end
-			if has_n then
-				local ht40plus = {
-					1,2,3,4,5,6,7,
-					36,44,52,60,100,108,116,124,132
-				}
-				for i, v in ipairs(ht40plus) do
-					if v == channel then
-						dev:set("htmode","HT40+")
-					end
-				end
-				local ht40minus = {
-					8,9,10,11,12,13,14,
-					40,48,56,64,104,112,120,128,136
-				}
-				for i, v in ipairs(ht40minus) do
-					if v == channel then
-						dev:set("htmode","HT40-")
-					end
-				end
-				local ht20 = {
-					140
-				}
-				for i, v in ipairs(ht20) do
-					if v == channel then
-						dev:set("htmode","HT20'")
-					end
-				end
-			end
 			net:set("ssid",ssid)
 			net:set("bssid",bssid)
 			net:set("mode",wificonfig.mode)
@@ -227,7 +208,7 @@ for i,dev in ipairs(devices) do
 				ssid=vap_ssid
 			})
 			table.insert(p2p_if,"wireless"..seq.."dhcp")
-
+	
 			ntm:save("wireless")
 	
 			uci:section("network","interface","wireless"..seq, {
@@ -239,12 +220,12 @@ for i,dev in ipairs(devices) do
 				proto = "static",
 				ip6assign = 64
 			})
-
+	
 			uci:save("network")
 	
 			table.insert(rifn,"wireless"..seq)
 			table.insert(rifn,"wireless"..seq.."dhcp")
-
+	
 			local olsrifbase = {}
 			olsrifbase.interface = "wireless"..seq
 			olsrifbase.ignore = "0"
@@ -254,6 +235,7 @@ for i,dev in ipairs(devices) do
 		end
 	end
 end
+
 
 if ready then
 
@@ -271,7 +253,9 @@ if ready then
 
 	--set community profile
 	local community = uci:get_all(external, "profile")
-	uci:tset("freifunk", "community", community)
+	if community then
+		uci:tset("freifunk", "community", community)
+	end
 	uci:set("freifunk", "community", "name", profile_name)
 
 	--save freifunk
@@ -308,7 +292,8 @@ if ready then
 	uci:section("olsrd6", "LoadPlugin", nil, {
 		library = "olsrd_jsoninfo.so.0.0",
 		ignore = 0,
-		accept = "::"
+		accept = "::",
+		ipv6only = "yes"
 	})
 
 	--add lan to olsr interfaces
@@ -368,8 +353,10 @@ if ready then
 			uci:set("system", s[".name"], "hostname", new_hostname)
 			sys.hostname(new_hostname)
 			-- Set hostname
-			uci:set("system", s[".name"], "latitude", community.latitude)
-			uci:set("system", s[".name"], "longitude", community.longitude)
+			if community then
+				uci:set("system", s[".name"], "latitude", community.latitude)
+				uci:set("system", s[".name"], "longitude", community.longitude)
+			end
 		end)
 
 	--save system
