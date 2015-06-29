@@ -23,7 +23,6 @@ local util = require "luci.util"
 local sys = require "luci.sys"
 local ip = require "luci.ip"
 local fs  = require "nixio.fs"
-local fs_luci = require "luci.fs"
 
 local has_3g = fs.access("/lib/netifd/proto/3g.sh")
 local has_pppoe = fs.glob("/usr/lib/pppd/*/rp-pppoe.so")()
@@ -38,7 +37,6 @@ local has_auto_ipv6_node = fs.access("/etc/config/auto_ipv6_node")
 local has_auto_ipv6_gw = fs.access("/etc/config/auto_ipv6_gw")
 local has_qos = fs.access("/etc/init.d/qos")
 local has_ipv6 = fs.access("/proc/sys/net/ipv6")
-local has_6relayd = fs.access("/usr/sbin/6relayd")
 local has_odhcpd = fs.access("/usr/sbin/odhcpd")
 local has_hostapd = fs.access("/usr/sbin/hostapd")
 local has_wan = uci:get("network", "wan", "proto")
@@ -146,7 +144,7 @@ net.optional = false
 net.datatype = "string"
 
 local list = {}
-local list = fs_luci.glob(profiles .. "*")
+local list = fs.glob(profiles .. "*")
 
 function net.cfgvalue(self, section)
 	return uci:get("freifunk", "wizard", "net") or "berlin"
@@ -162,7 +160,7 @@ net_lon = f:field(ListValue, "net_lon", "", "")
 net_lon:depends("net", "0")
 net_lon.datatype = "float"
 
-for k,v in ipairs(list) do
+for v in list do
 	local n = string.gsub(v, profiles, "")
 	local name = uci:get_first("profile_"..n, "community", "name") or "?"
 	net:value(n, name)
@@ -1001,11 +999,7 @@ function f.handle(self, state, data)
 		else
 			if data.pw1 then
 				local stat = luci.sys.user.setpasswd("root", data.pw1) == 0
---				if stat then
---					f.message = translate("a_s_changepw_changed")
---			else
---				f.errmessage = translate("unknownerror")
-				end
+			end
 			data.pw1 = nil
 			data.pw2 = nil
 			uci:commit("freifunk")
@@ -1045,9 +1039,6 @@ function f.handle(self, state, data)
 			end
 			if has_pr then
 				uci:commit("freifunk-policyrouting")
-			end
-			if has_6relayd then
-				uci:commit("6relayd")
 			end
 
 -- the following line didn't work without admin-mini, for now i just replaced it with sys.exec... soma
@@ -1136,20 +1127,6 @@ function main.write(self, section, value)
 	uci:delete_all("olsrd", "olsrd")
 	uci:delete_all("olsrd6", "olsrd")
 
-	-- Set jsoninfo defaults
-	uci:foreach("olsrd", "LoadPlugin",
-	function(s)
-		if s.library == "olsrd_jsoninfo.so.0.0" then
-			uci:set("olsrd", s['.name'], "accept", "0.0.0.0")
-		end
-	end)
-	uci:foreach("olsrd6", "LoadPlugin",
-	function(s)
-		if s.library == "olsrd_jsoninfo.so.0.0" then
-			uci:set("olsrd6", s['.name'], "accept", "::")
-		end
-	end)
-
 	-- Get freifunk olsrd defaults
 	local olsrbase = uci:get_all("freifunk", "olsrd") or {}
 	local olsrbase6 = uci:get_all("freifunk", "olsrd") or {}
@@ -1159,21 +1136,10 @@ function main.write(self, section, value)
 	olsrbase6.LinkQualityAlgorithm = "etx_ffeth"
 	olsrbase6.NatThreshold = nil
 	olsrbase6.SmartGateway= nil
-	if has_6relayd then
-		uci:delete("6relayd", "default")
-		uci:section("6relayd","server","default", {
-			rd = "server",
-			dhcpv6 = "server",
-			management_level = "1",
-			compat_ula = "1",
-			always_assume_default = "1"
-		})
-		uci:save("6relayd")
-	end
 	if has_odhcpd then
 		uci:delete("dhcp", "odhcpd")
 		uci:section("dhcp","odhcpd","odhcpd", {
-			maindhcp = "0",
+			maindhcp = "1",
 			leasefile = "/tmp/hosts/odhcpd",
 			leasetrigger = "/usr/sbin/odhcpd-update"
 		})
@@ -1250,19 +1216,13 @@ function main.write(self, section, value)
 	uci:delete_all("olsrd", "Hna4")
 	uci:delete_all("olsrd6", "Hna6")
 	
-	if has_6relayd then
-		uci:delete("6relayd","default","network")
-	end
-	if has_odhcpd then
-		uci:delete("dhcp","odhcpd","odhcpd")
-	end
-
 	-- Create wireless ip4/ip6 and firewall config
 	uci:foreach("wireless", "wifi-device",
 	function(sec)
 		local device = sec[".name"]
 		local mesh_device = wifi_tbl[device]["dev"]:formvalue(section)
 		local br_device = wifi_tbl[device]["dhcpbr"]:formvalue(section)
+		local dhcp_device
 		if not mesh_device and not br_device then
 			logger("olsr disable: "..device)
 			return
@@ -1300,7 +1260,6 @@ function main.write(self, section, value)
 		-- Cleanup
 		tools.wifi_delete_ifaces(device)
 		tools.wifi_delete_ifaces("wlan")
-		-- tools.network_remove_interface(device)
 		uci:delete("network", device .. "dhcp")
 		uci:delete("network", device)
 		if has_firewall then
@@ -1312,7 +1271,6 @@ function main.write(self, section, value)
 			uci:delete_all("luci_splash", "iface", {network=device.."dhcp", zone="freifunk"})
 			uci:delete_all("luci_splash", "iface", {network=nif.."dhcp", zone="freifunk"})
 		end
-		-- tools.network_remove_interface(nif)
 		uci:delete("network", nif .. "dhcp")
 		uci:delete("network", nif)
 		-- Delete old dhcp
@@ -1325,30 +1283,16 @@ function main.write(self, section, value)
 		-- New Config
 		-- Tune wifi device
 		local ssid = uci:get_first(external, "community", "ssid")
-		local ssiddot = string.find(ssid,'%..*')
-		local ssidshort
-		if ssiddot then
-			ssidshort = string.sub(ssid,ssiddot)
-		else
-			ssidshort = ssid
-		end
+		local ssidshort = "."..ssid
+		local vap_ssid
 		local devconfig = uci:get_all("freifunk", "wifi_device") or {}
 		util.update(devconfig, uci:get_all(external, "wifi_device") or {})
 		local channel = wifi_tbl[device]["chan"]:formvalue(section) or "default"
 		local mode = wifi_tbl[device]["mode"]:formvalue(section) or "adhoc"
 		logger("ssid: "..ssid.." channel: "..channel.." mode: "..mode)
 		local hwtype = sec.type
-		local hwmode
+		local hwmode = sec.hwmode
 		local pre
-		local has_n
-		if hwtype == "mac80211" then
-			hwmode = sec.hwmode
-			if hwmode and string.find(hwmode, "n") then
-				has_n = "n"
-			end
-		end
-		local hwmode = "11"..(has_n or "")
-		--local bssid = "02:CA:FF:EE:BA:BE"
 		local bssid
 		local mrate = 5500
 		local freqlist
@@ -1414,27 +1358,22 @@ function main.write(self, section, value)
 			end
 			if channel > 0 and channel < 10 then
 				pre = 2
-				hwmode = hwmode.."g"
 				mrate = ""
 				bssid = channel .. "2:CA:FF:EE:BA:BE"
 			elseif channel == 10 then
 				pre = 2
-				hwmode = hwmode.."g"
 				mrate = ""
 				bssid = "02:CA:FF:EE:BA:BE"
 			elseif channel >= 11 and channel <= 14 then
 				pre = 2
-				hwmode = hwmode.."g"
 				bssid = string.format("%X",channel) .. "2:CA:FF:EE:BA:BE"
 			elseif channel >= 36 and channel <= 64 then
 				pre = 5
-				hwmode = hwmode.."a"
 				mrate = ""
 				outdoor = 0
 				bssid = "02:" .. channel ..":CA:FF:EE:EE"
-			elseif channel >= 100 and channel <= 140 then
+			elseif channel >= 100 and channel <= 166 then
 				pre = 5
-				hwmode = hwmode.."a"
 				mrate = ""
 				outdoor = 1
 				bssid = "12:" .. string.sub(channel, 2) .. ":CA:FF:EE:EE"
@@ -1447,28 +1386,23 @@ function main.write(self, section, value)
 			channel = tonumber(channel)
 			if channel > 0 and channel < 10 then
 				pre = 2
-				hwmode = hwmode.."g"
 				mrate = ""
 				bssid = channel .. "2:CA:FF:EE:BA:BE"
 			elseif channel == 10 then
 				pre = 2
-				hwmode = hwmode.."g"
 				mrate = ""
 				bssid = "02:CA:FF:EE:BA:BE"
 			elseif channel >= 11 and channel <= 14 then
 				pre = 2
-				hwmode = hwmode.."g"
 				mrate = ""
 				bssid = string.format("%X",channel) .. "2:CA:FF:EE:BA:BE"
 			elseif channel >= 36 and channel <= 64 then
 				pre = 5
-				hwmode = hwmode.."a"
 				mrate = ""
 				outdoor = 0
 				bssid = "02:" .. channel ..":CA:FF:EE:EE"
-			elseif channel >= 100 and channel <= 140 then
+			elseif channel >= 100 and channel <= 166 then
 				pre = 5
-				hwmode = hwmode.."a"
 				mrate = ""
 				outdoor = 1
 				bssid = "12:" .. string.sub(channel, 2) .. ":CA:FF:EE:EE"
@@ -1480,43 +1414,8 @@ function main.write(self, section, value)
 		end
 		devconfig.hwmode = hwmode
 		devconfig.doth = doth
-		if has_n then
-			if doth then
-				devconfig.htmode = 'HT20'
-			else
-				local ht40plus = {
-					1,2,3,4,5,6,7,
-					36,44,52,60,100,108,116,124,132
-				}
-				for i, v in ipairs(ht40plus) do
-					if v == channel then
-						devconfig.htmode = 'HT40+'
-						devconfig.noscan = '1'
-					end
-				end
-				local ht40minus = {
-					8,9,10,11,12,13,14,
-					40,48,56,64,104,112,120,128,136
-				}
-				for i, v in ipairs(ht40minus) do
-					if v == channel then
-						devconfig.htmode = 'HT40-'
-						devconfig.noscan = '1'
-					end
-				end
-				local ht20 = {
-					140
-				}
-				for i, v in ipairs(ht20) do
-					if v == channel then
-						devconfig.htmode = 'HT20'
-					end
-				end
-			end
-		end
 		if channel >= 100 and channel <= 140 and (mode == "ap" or mode == "sta") then
 			devconfig.country = "DE"
-			devconfig.htmode = "HT20"
 			devconfig.doth = "1"
 			devconfig.chanlist = "100 104 108 112 116 120 124 128 132 136 140"
 		else
@@ -1568,19 +1467,14 @@ function main.write(self, section, value)
 			end
 			prenetconfig.ip6assign=64
 			uci:section("network", "interface", nif, prenetconfig)
-			if has_6relayd then
-				local rifn = uci:get_list("6relayd","default","network") or {}
-				table.insert(rifn,nif)
-				uci:set_list("6relayd","default","network",rifn)
-				uci:save("6relayd")
-			end
 			if has_odhcpd then
 				uci:section("dhcp", "dhcp", nif, {
 					dhcpv6 = "server",
 					ra = "server",
-					domain = profile_suffix,
 					ra_preference = "low",
+					ra_default = 2,
 				})
+				uci:set_list("dhcp", nif, "domain", {"olsr", "pberg.freifunk.net"})
 			end
 			local new_hostname = node_ip:string():gsub("%.", "-")
 			uci:set("freifunk", "wizard", "hostname", new_hostname)
@@ -1671,6 +1565,7 @@ function main.write(self, section, value)
 					end
 				end
 				if dhcp_ip and dhcp_mask then
+					dhcp_device = nif.."dhcp"
 					-- Create alias
 					local aliasbase = uci:get_all("freifunk", "alias") or {}
 					util.update(aliasbase, uci:get_all(external, "alias") or {})
@@ -1678,41 +1573,30 @@ function main.write(self, section, value)
 					aliasbase.netmask = dhcp_mask
 					aliasbase.proto = "static"
 					-- Create dhcp
-					local dhcpbase = uci:get_all("freifunk", "dhcp") or {}
-					util.update(dhcpbase, uci:get_all(external, "dhcp") or {})
-					dhcpbase.interface = nif .. "dhcp"
+					local dhcpbase = {}
+					dhcpbase.interface = dhcp_device
 					dhcpbase.force = 1
 					dhcpbase.ignore = 0
+					uci:section("dhcp", "dhcp", dhcp_device, dhcpbase)
+					uci:set_list("dhcp", dhcp_device, "dhcp_option", {"119,olsr", "119,pberg.freifunk.net"})
 					if vap then
-						local vap_ssid = wifi_tbl[device]["vapssid"]:formvalue(section)
+						vap_ssid = wifi_tbl[device]["vapssid"]:formvalue(section)
 						if(string.len(vap_ssid)==0) then
 							vap_ssid = "AP"..channel..ssidshort
 						end
 						uci:set("freifunk", "wizard", "vapssid_" .. device, vap_ssid)
 						aliasbase.ip6assign=64
-						if has_6relayd then
-							local rifn = uci:get_list("6relayd","default","network") or {}
-							table.insert(rifn,nif.."dhcp")
-							uci:set_list("6relayd","default","network",rifn)
-							uci:save("6relayd")
+						if has_odhcpd then
+							uci:set("dhcp", dhcp_device,"dhcpv4","server")
+							uci:set("dhcp", dhcp_device,"dhcpv6","server")
+							uci:set("dhcp", dhcp_device,"ra","server")
+							uci:set("dhcp", dhcp_device,"ra_preference","low")
+							uci:set("dhcp", dhcp_device,"ra_default",2)
+							uci:set_list("dhcp", dhcp_device, "domain", {"olsr", "pberg.freifunk.net"})
 						end
-						if has_6relayd then
-							dhcpbase.dhcpv6 = "server"
-							dhcpbase.ra = "server"
-							dhcpbase.domain = profile_suffix
-							dhcpbase.ra_preference = "low"
-						end
-						uci:section("network", "interface", nif .. "dhcp", aliasbase)
-						uci:section("wireless", "wifi-iface", nil, {
-							device=device,
-							mode="ap",
-							encryption ="none",
-							network=nif.."dhcp",
-							ifname=ifcfg.."-dhcp-"..pre,
-							ssid=vap_ssid
-						})
+						uci:section("network", "interface", dhcp_device, aliasbase)
 						if has_firewall then
-							tools.firewall_zone_add_interface("freifunk", nif .. "dhcp")
+							tools.firewall_zone_add_interface("freifunk", dhcp_device)
 						end
 						uci:save("wireless")
 						uci:save("freifunk")
@@ -1721,16 +1605,14 @@ function main.write(self, section, value)
 					else
 						--this does not work
 						--aliasbase.ifname = "@"..nif
-						uci:section("network", "interface", nif .. "dhcp", aliasbase)
+						uci:section("network", "interface", dhcp_device, aliasbase)
 						--but a second network entry in wireless work
-						ifconfig.network = nif .. " " .. nif .. "dhcp"
+						ifconfig.network = nif.." "..dhcp_device
 						if has_firewall then
-							tools.firewall_zone_add_interface("freifunk", nif .. "dhcp")
+							tools.firewall_zone_add_interface("freifunk", dhcp_device)
 						end
 					end
 					uci:save("network")
-					uci:section("dhcp", "dhcp", nif .. "dhcp", dhcpbase)
-					uci:set_list("dhcp", nif .. "dhcp", "dhcp_option", "119,olsr")
 					if has_firewall then
 						-- Create firewall settings
 						uci:delete_all("firewall", "rule", {
@@ -1781,6 +1663,10 @@ function main.write(self, section, value)
 				end
 			end
 		end
+		--Write Ad-Hoc wifi section after AP wifi section
+		if mesh_device then
+			uci:section("wireless", "wifi-iface", nil, ifconfig)
+		end
 		if br_device then
 			local vap_ssid = wifi_tbl[device]["vapssid"]:formvalue(section)
 			if(string.len(vap_ssid)==0) then
@@ -1790,15 +1676,21 @@ function main.write(self, section, value)
 			uci:section("wireless", "wifi-iface", nil, {
 				device=device,
 				mode="ap",
-				encryption ="none",
+				encryption="none",
 				network="lan",
 				ifname=ifcfg.."-dhcp-"..pre,
 				ssid=vap_ssid
 			})
 		end
-		--Write Ad-Hoc wifi section after AP wifi section
-		if mesh_device then
-			uci:section("wireless", "wifi-iface", nil, ifconfig)
+		if dhcp_device then
+			uci:section("wireless", "wifi-iface", nil, {
+				device=device,
+				mode="ap",
+				encryption="none",
+				network=dhcp_device,
+				ifname=ifcfg.."-dhcp-"..pre,
+				ssid=vap_ssid
+			})
 		end
 		uci:save("network")
 		uci:save("wireless")
@@ -1872,19 +1764,15 @@ function main.write(self, section, value)
 		prenetconfig.password = ''
 		uci:section("network", "interface", device, prenetconfig)
 		uci:save("network")
-		if has_6relayd then
-			local rifn = uci:get_list("6relayd","default","network") or {}
-			table.insert(rifn,device)
-			uci:set_list("6relayd","default","network",rifn)
-			uci:save("6relayd")
-		end
 		if has_odhcpd then
 			uci:section("dhcp", "dhcp", device, {
 				dhcpv6 = "server",
 				ra = "server",
-				domain = profile_suffix,
 				ra_preference = "low",
+				ra_default = 2,
+				ra_offlink = 1,
 			})
+			uci:set_list("dhcp", device, "domain", {"olsr", "pberg.freifunk.net"})
 		end
 		if has_wan and device == "wan" then
 			has_wan=nil
@@ -1975,6 +1863,7 @@ function main.write(self, section, value)
 				end
 			end
 			if dhcp_ip and dhcp_mask then
+				dhcp_device = device .. "dhcp"
 				-- Create alias
 				local aliasbase = uci:get_all("freifunk", "alias") or {}
 				util.update(aliasbase, uci:get_all(external, "alias") or {})
@@ -1982,18 +1871,21 @@ function main.write(self, section, value)
 				aliasbase.ipaddr = dhcp_ip
 				aliasbase.netmask = dhcp_mask
 				aliasbase.proto = "static"
-				uci:section("network", "interface", device .. "dhcp", aliasbase)
+				uci:section("network", "interface", dhcp_device, aliasbase)
 				if has_firewall then
-					tools.firewall_zone_add_interface("freifunk", device .. "dhcp")
+					tools.firewall_zone_add_interface("freifunk", dhcp_device)
 				end
 				-- Create dhcp
-				local dhcpbase = uci:get_all("freifunk", "dhcp") or {}
-				util.update(dhcpbase, uci:get_all(external, "dhcp") or {})
-				dhcpbase.interface = device .. "dhcp"
+				local dhcpbase = {}
+				dhcpbase.interface = dhcp_device
 				dhcpbase.force = 1
 				dhcpbase.ignore = 0
-				uci:section("dhcp", "dhcp", device .. "dhcp", dhcpbase)
-				uci:set_list("dhcp", device .. "dhcp", "dhcp_option", "119,olsr")
+				uci:section("dhcp", "dhcp", dhcp_device, dhcpbase)
+				uci:set_list("dhcp", dhcp_device, "dhcp_option", {"119,olsr", "119,pberg.freifunk.net"})
+				if has_odhcpd then
+					uci:set("dhcp", dhcp_device,"dhcpv4","server")
+					uci:set_list("dhcp", dhcp_device, "domain", {"olsr", "pberg.freifunk.net"})
+				end
 				if has_firewall then
 					-- Create firewall settings
 					uci:delete_all("firewall", "rule", {
@@ -2036,7 +1928,7 @@ function main.write(self, section, value)
 						local dhcpsplash = wired_tbl[device]["dhcpsplash"]:formvalue(section)
 						if dhcpsplash then
 							-- Register splash interface
-							uci:section("luci_splash", "iface", nil, {network=device.."dhcp", zone="freifunk"})
+							uci:section("luci_splash", "iface", nil, {dhcp_device, zone="freifunk"})
 							-- Make sure that luci_splash is enabled
 							has_splash_enable = 1
 						end
@@ -2210,6 +2102,9 @@ function main.write(self, section, value)
 		services_file = "/var/etc/services.olsr.ipv6"
 	})
 
+	-- Delete old jsoninfo settings
+	uci:delete_all("olsrd", "LoadPlugin", {library="olsrd_jsoninfo.so.0.0"})
+	uci:delete_all("olsrd6", "LoadPlugin", {library="olsrd_jsoninfo.so.0.0"})
 	--set olsrd jsoninfo listen on 9090
 	uci:section("olsrd", "LoadPlugin", nil, {
 		library = "olsrd_jsoninfo.so.0.0",
@@ -2219,6 +2114,7 @@ function main.write(self, section, value)
 	uci:section("olsrd6", "LoadPlugin", nil, {
 		library = "olsrd_jsoninfo.so.0.0",
 		ignore = 0,
+		ipv6only = "yes",
 		accept = "::"
 	})
 
@@ -2385,20 +2281,22 @@ function main.write(self, section, value)
 					tools.firewall_zone_add_masq_src("freifunk", flanipn:string())
 					tools.firewall_zone_enable_masq("freifunk")
 					uci:save("firewall")
-					-- Create dhcp
-					local dhcpbase = {}
-					dhcpbase.interface = "lan"
-					dhcpbase.ignore = 0
-					uci:section("dhcp", "dhcp", "lan", dhcpbase)
-					uci:set_list("dhcp", "lan", "dhcp_option", {"119,lan","119,olsr"})
-					uci:save("dhcp")
 				end
-			end
-			if has_6relayd then
-				local rifn = uci:get_list("6relayd","default","network") or {}
-				table.insert(rifn,"lan")
-				uci:set_list("6relayd","default","network",rifn)
-				uci:save("6relayd")
+				-- Create dhcp
+				local dhcpbase = {}
+				dhcpbase.interface = "lan"
+				dhcpbase.ignore = 0
+				uci:section("dhcp", "dhcp", "lan", dhcpbase)
+				uci:set_list("dhcp", "lan", "dhcp_option", {"119,lan","119,olsr", "119,pberg.freifunk.net"})
+				if has_odhcpd then
+					uci:set("dhcp", "lan","dhcpv4","server")
+					uci:set("dhcp", "lan","dhcpv6","server")
+					uci:set("dhcp", "lan","ra","server")
+					uci:set("dhcp", "lan","ra_preference","low")
+					uci:set("dhcp", "lan","ra_default",2)
+					uci:set_list("dhcp", "lan", "domain", {"lan","olsr", "pberg.freifunk.net"})
+				end
+				uci:save("dhcp")
 			end
 		end
 	end
