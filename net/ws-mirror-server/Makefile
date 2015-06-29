@@ -20,7 +20,7 @@ define Package/ws-mirror-server/default
   CATEGORY:=Network
   SUBMENU:=Web Servers/Proxies
   TITLE:=ws-mirror-server - Websocket Mirror Server for js chat
-  DEPENDS:=+libwebsockets +zlib \
+  DEPENDS:=+libwebsockets-cyassl +zlib \
     +libubox +libubus +ubusd +libblobmsg-json
 #    +PACKAGE_libwebsockets_openssl:libopenssl \
 #    +PACKAGE_libwebsockets_cyassl:cyassl
