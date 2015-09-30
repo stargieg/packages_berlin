@@ -103,6 +103,7 @@ static int callback_http(struct libwebsocket_context * context,
 #endif
     char buf[256];
 	int n;
+	char *other_headers;
 #ifdef EXTERNAL_POLL
 	int fd = (int)(long)in;
 #endif
@@ -116,8 +117,8 @@ static int callback_http(struct libwebsocket_context * context,
 				break;
 
 		sprintf(buf, LOCAL_RESOURCE_PATH"%s", whitelist[n].urlpath);
-
-		if (libwebsockets_serve_http_file(context, wsi, buf, whitelist[n].mimetype))
+                other_headers = NULL;
+		if (libwebsockets_serve_http_file(context, wsi, buf, whitelist[n].mimetype,other_headers))
 			return -1; /* through completion or error, close the socket */
 
 		/*
@@ -229,8 +230,8 @@ callback_lws_mirror(struct libwebsocket_context * context,
 	int n;
 	//struct per_session_data__lws_mirror *pss = user;
 	
-	unsigned char buf[LWS_SEND_BUFFER_PRE_PADDING + 512 +
-						  LWS_SEND_BUFFER_POST_PADDING];
+	//unsigned char buf[LWS_SEND_BUFFER_PRE_PADDING + 512 +
+	//					  LWS_SEND_BUFFER_POST_PADDING];
 	//unsigned char *p = &buf[LWS_SEND_BUFFER_PRE_PADDING];
 	struct per_session_data__lws_mirror *pss = (struct per_session_data__lws_mirror *)user;
 
@@ -381,48 +382,48 @@ static struct libwebsocket_protocols protocols[] = {
 	}
 };
 
-static void receive_event(struct ubus_context *ctx, struct ubus_event_handler *ev,
-			  const char *type, struct blob_attr *msg)
-{
-	int wlen = 0;
-	unsigned char tbuf[LWS_SEND_BUFFER_PRE_PADDING + 4096 +
-						  LWS_SEND_BUFFER_POST_PADDING];
-	char *str;
-	char *message;
-	str = blobmsg_format_json(msg, true);
-	message = str;
-	wlen = strlen(message);
-	memcpy(&tbuf[LWS_SEND_BUFFER_PRE_PADDING], message, wlen);
+//static void receive_event(struct ubus_context *ctx, struct ubus_event_handler *ev,
+//			  const char *type, struct blob_attr *msg)
+//{
+//	int wlen = 0;
+//	unsigned char tbuf[LWS_SEND_BUFFER_PRE_PADDING + 4096 +
+//						  LWS_SEND_BUFFER_POST_PADDING];
+//	char *str;
+//	char *message;
+//	str = blobmsg_format_json(msg, true);
+//	message = str;
+//	wlen = strlen(message);
+//	memcpy(&tbuf[LWS_SEND_BUFFER_PRE_PADDING], message, wlen);
 	
-//	libwebsockets_broadcast_foreign(&protocols[PROTOCOL_LWS_MIRROR],
-//					&tbuf[LWS_SEND_BUFFER_PRE_PADDING], wlen);
-	libwebsocket_callback_on_writable_all_protocol(&protocols[PROTOCOL_LWS_MIRROR]);
+////	libwebsockets_broadcast_foreign(&protocols[PROTOCOL_LWS_MIRROR],
+////					&tbuf[LWS_SEND_BUFFER_PRE_PADDING], wlen);
+//	libwebsocket_callback_on_writable_all_protocol(&protocols[PROTOCOL_LWS_MIRROR]);
 
-	free(str);
-}
+//	free(str);
+//}
 
 
 
-static int ubus_cli_listen(struct ubus_context *ctx, struct libwebsocket_context *context,char *event)
-{
-	static struct ubus_event_handler listener;
-	int ret;
+//static int ubus_cli_listen(struct ubus_context *ctx, struct libwebsocket_context *context,char *event)
+//{
+//	static struct ubus_event_handler listener;
+//	int ret;
 
-	memset(&listener, 0, sizeof(listener));
-	listener.cb = receive_event;
+//	memset(&listener, 0, sizeof(listener));
+//	listener.cb = receive_event;
 
-	ret = ubus_register_event_handler(ctx, &listener, event);
-	if (ret) {
-		fprintf(stderr, "Error while registering for event '%s': %s\n",
-				event, ubus_strerror(ret));
-		return -1;
-	}
-	uloop_init();
-	ubus_add_uloop(ctx);
-	uloop_run();
-	uloop_done();
-	return 0;
-}
+//	ret = ubus_register_event_handler(ctx, &listener, event);
+//	if (ret) {
+//		fprintf(stderr, "Error while registering for event '%s': %s\n",
+//				event, ubus_strerror(ret));
+//		return -1;
+//	}
+//	uloop_init();
+//	ubus_add_uloop(ctx);
+//	uloop_run();
+//	uloop_done();
+//	return 0;
+//}
 
 void sighandler(int sig)
 {
@@ -444,19 +445,19 @@ int main(int argc, char **argv)
 {
 	int n = 0;
 	int use_ssl = 0;
-	unsigned int oldus = 0;
+	//unsigned int oldus = 0;
 	struct libwebsocket_context *context;
 	int opts = 0;
 	char interface_name[128] = "";
 	const char *iface = NULL;
 	struct lws_context_creation_info info;
-	int debug_level = 7;
+	//int debug_level = 7;
 	
 	memset(&info, 0, sizeof info);
 	info.port = 7681;
 
-	unsigned char buf[LWS_SEND_BUFFER_PRE_PADDING + 4096 +
-	    LWS_SEND_BUFFER_POST_PADDING];
+	//unsigned char buf[LWS_SEND_BUFFER_PRE_PADDING + 4096 +
+	//    LWS_SEND_BUFFER_POST_PADDING];
     const char *ubus_socket = NULL;
 	struct ubus_context *ctx;
 	
@@ -465,9 +466,9 @@ int main(int argc, char **argv)
 		if (n < 0)
 			continue;
 		switch (n) {
-		case 'd':
-			debug_level = atoi(optarg);
-			break;
+		//case 'd':
+		//	debug_level = atoi(optarg);
+		//	break;
 		case 's':
 			use_ssl = 1;
 			break;
@@ -534,7 +535,7 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	buf[LWS_SEND_BUFFER_PRE_PADDING] = 'x';
+	//buf[LWS_SEND_BUFFER_PRE_PADDING] = 'x';
 	n = 0;
 	while (n >= 0 && !force_exit) {
 		struct timeval tv;
