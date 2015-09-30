@@ -73,31 +73,40 @@ for _, p in ipairs(prefix) do
 			if con == 0 then
 				print("Not Configured:",p.net)
 				if p.genmask == 56 then
-					local rand = sys.exec("head -n 1 /dev/urandom 2>/dev/null | md5sum | cut -b 1-2")
+					local rand = sys.exec("head -c 16 -q /dev/urandom 2>/dev/null | md5sum | cut -b 1-2")
+					rand = string.gsub(rand,"\n","")
 					local net = string.gsub(p.destination,"00::",rand.."::/62")
 					net = ip.IPv6(net)
 					if net and net:is6() then
 						net = net:network()
 						print("New Configuration:",net:string().."/56")
 						uciprefix[#uciprefix+1] = { net=net:string().."/62",gateway=p.gateway,con=0 }
+					else
+						print("ERR genmask 56 not a valid ipv6 net")
 					end
 				elseif p.genmask == 52 then
 					local rand = sys.exec("head -n 1 /dev/urandom 2>/dev/null | md5sum | cut -b 1-3")
+					rand = string.gsub(rand,"\n","")
 					local net = string.gsub(p.destination,"000::",rand.."::/62")
 					net = ip.IPv6(net)
 					if net and net:is6() then
 						net = net:network()
 						print("New Configuration:",net:string().."/52")
 						uciprefix[#uciprefix+1] = { net=net:string().."/62",gateway=p.gateway,con=0 }
+					else
+						print("ERR genmask 52 not a valid ipv6 net")
 					end
 				else
 					local rand = sys.exec("head -n 1 /dev/urandom 2>/dev/null | md5sum | cut -b 1-4")
+					rand = string.gsub(rand,"\n","")
 					local net = string.gsub(p.destination,"::",":"..rand.."::/61")
 					net = ip.IPv6(net)
 					if net and net:is6() then
 						net = net:network()
 						print("New Configuration:",net:string().."/61")
 						uciprefix[#uciprefix+1] = { net=net:string().."/61",gateway=p.gateway,con=0 }
+					else
+						print("ERR genmask 56 not a valid ipv6 net")
 					end
 				end
 			end
@@ -192,7 +201,7 @@ if uci_rewrite == 1 then
 	uci:save("olsrd6")
 	uci:commit("olsrd6")
 	util.exec("/etc/init.d/network restart")
-	util.exec("/bin/sleep 3")
+	util.exec("/bin/sleep 10")
 	util.exec("/etc/init.d/olsrd6 restart")
 	util.exec("/etc/init.d/odhcpd restart")
 	util.exec("chmod 0644 /etc/config/*")
